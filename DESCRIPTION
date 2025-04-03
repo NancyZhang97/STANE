@@ -9,3 +9,15 @@ Description: More about what it does (maybe more than one line)
 License: What license is it under?
 Encoding: UTF-8
 LazyData: true
+Imports: 
+    doParallel,
+    dplyr,
+    ggpubr,
+    glmnet,
+    islasso,
+    nnls,
+    raster,
+    Seurat,
+    stats
+Depends: 
+    R (>= 2.10)
