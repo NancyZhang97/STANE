@@ -1,3 +1,35 @@
+#' Run the major STANE process for one loop
+#'
+#' This function runs the major process of one loop for STANE, including cell deconvolution on spot-level
+#' sptial transcriptomics data, niche effect estimation caused by cell-cell interactions and spot-specific cell
+#' expression profile adjusted by niche effects. The results of this loop will be saved in the defined file path.
+#' @param filepath A string of file path name to save the outputs of this loop.
+#' @param st_count Expression matrix for single-cell level data.
+#' @param st_coords The dataframe containing coordinate of spots.
+#' @param ref_celltype_gep The cell type-specific expression profile for reference.
+#' @param marker_ref_celltype_gep The cell type-specific expression profile of marker genes for reference.
+#' @param prop_cut A threshold for cell proportion deconvolution; cell type with higher proportion than the cutoff
+#' exists in the spot.
+#' @param cell_cut_list A vector of cut-off values for each cell type. If NULL, will use the same
+#' threshold defined by cutoff.
+#' @param loop The number of loop for iteration. If loop = 1, start the STANE process without previous niche-effect
+#' information; else if loop > 1, consider previous niche effects in the process.
+#' @param c A weight that controls the weight of spot-spot distance during abundance calculation.
+#' @param consider_self Logical. Whether considering cells in the index spot itself while calculating
+#' cell abundance for this spot.
+#' @param alpha A weight that controls the influential level of niche effects on gene expression.
+#' @param p_cut A threshold of p-values for niche effect estimation. Niche effects with regression p-values lower
+#' than the p_cut is considered as significant.
+#' @param max_cores Number of cores used for parallel computing. If max_cores < 1, stop using parallel computing.
+#' @examples
+#' data(sc_label)
+#' data(sc_count)
+#' ref_celltype_count<-generate_ref_celltype_gep(sc_count = sc_count, label = sc_label)
+#' marker_ref_celltype_count<-generate_marker_celltype_gep(ref_celltype_gep = ref_celltype_count, sc_count = sc_count, label = sc_label)
+#' data(st_count)
+#' data(st_coords)
+#' run_STANE(filepath=getwd(),st_count = st_count,st_coords = st_coords,ref_celltype_gep = ref_celltype_count,marker_ref_celltype_gep = marker_ref_celltype_count,loop = 1,max_cores=5)
+#' @export
 run_STANE<-function(filepath=getwd(),st_count,st_coords,ref_celltype_gep,marker_ref_celltype_gep,cell_cut_list=NULL,loop=1,c=0.05,consider_self=T,alpha=0.2,p_cut=1e-5,prop_cut=0.1,max_cores=8){
   common_gene<-intersect(row.names(st_count),row.names(ref_celltype_gep))
   common_marker_gene<-intersect(row.names(st_count),row.names(marker_ref_celltype_gep))
@@ -37,7 +69,7 @@ run_STANE<-function(filepath=getwd(),st_count,st_coords,ref_celltype_gep,marker_
       doParallel::registerDoParallel(cl)
       environ = c('calculate_nnls_cut','generate_spot_exp','st_count','marker_ref_celltype_gep','cell_cut_list','alpha','mat_neighbor_abundance0','sig_beta_data','prop_cut')
       results <- foreach::foreach(i = (1:ncol(st_count)), .packages = c("nnls"), .export = environ) %dopar% { #
-        new_marker_ref_celltype_gep=generate_spot_exp(alpha = alpha,sample = colnames(st_count)[i],marker_ref_celltype_gep = marker_ref_celltype_gep,
+        new_marker_ref_celltype_gep=generate_spot_exp(alpha = alpha,spotID = colnames(st_count)[i],marker_ref_celltype_gep = marker_ref_celltype_gep,
                                                       neighbor_prop = mat_neighbor_abundance0,sig_beta_list = sig_beta_data)
         res<-calculate_nnls_cut(spot_count=st_count[,i],marker_ref_celltype_gep=new_marker_ref_celltype_gep,cell_cut_list = cell_cut_list,cutoff=prop_cut)
         res
@@ -131,14 +163,51 @@ run_STANE<-function(filepath=getwd(),st_count,st_coords,ref_celltype_gep,marker_
   print(paste0("Loop ",loop,": Finish the process"))
 }
 
-run_STANE_loop<-function(filepath=getwd(),st_count,st_coords,ref_celltype_gep,marker_ref_celltype_gep,cell_cut_list=NULL,start_loop=1,c=0.05,consider_self=T,alpha=0.2,p_cut=1e-5,prop_cut=0.1,max_cores=8){
+#' Run the STANE interation process until results converge
+#'
+#' This function runs the STANE process by interaction until deconvolution results converge. Each loop includes
+#' cell deconvolution on spot-level sptial transcriptomics data, niche effect estimation caused by cell-cell
+#' interactions and spot-specific cell expression profile adjusted by niche effects. The results of each loop
+#' will be saved in the defined file path. Once the loop number get larger than 1, the deconvolution results will
+#' be compared with results of previous loop to decide whether running process turn into the next loop. The function
+#' will give the results of the last loop as the final output.
+#' @param filepath A string of file path name to save the outputs of this loop.
+#' @param st_count Expression matrix for single-cell level data.
+#' @param st_coords The dataframe containing coordinate of spots.
+#' @param ref_celltype_gep The cell type-specific expression profile for reference.
+#' @param marker_ref_celltype_gep The cell type-specific expression profile of marker genes for reference.
+#' @param prop_cut A threshold for cell proportion deconvolution; cell type with higher proportion than the cutoff
+#' exists in the spot.
+#' @param cell_cut_list A vector of cut-off values for each cell type. If NULL, will use the same
+#' threshold defined by cutoff.
+#' @param start_loop The number of loop to start iteration. If loop = 1, start the STANE process without previous
+#' niche-effect information; else if loop > 1, consider previous niche effects in the process.
+#' @param c A weight that controls the weight of spot-spot distance during abundance calculation.
+#' @param consider_self Logical. Whether considering cells in the index spot itself while calculating
+#' cell abundance for this spot.
+#' @param alpha A weight that controls the influential level of niche effects on gene expression.
+#' @param p_cut A threshold of p-values for niche effect estimation. Niche effects with regression p-values lower
+#' than the p_cut is considered as significant.
+#' @param rmse_cut A threshold of RMSE between two adjacent loops' deconvolution results to determine whether the
+#' results converge.
+#' @param max_cores Number of cores used for parallel computing. If max_cores < 1, stop using parallel computing.
+#' @examples
+#' data(sc_label)
+#' data(sc_count)
+#' ref_celltype_count<-generate_ref_celltype_gep(sc_count = sc_count, label = sc_label)
+#' marker_ref_celltype_count<-generate_marker_celltype_gep(ref_celltype_gep = ref_celltype_count, sc_count = sc_count, label = sc_label)
+#' data(st_count)
+#' data(st_coords)
+#' res<-run_STANE_loop(filepath=getwd(),st_count = st_count,st_coords = st_coords,ref_celltype_gep = ref_celltype_count,marker_ref_celltype_gep = marker_ref_celltype_count,start_loop = 1,max_cores = 5)
+#' @export
+run_STANE_loop<-function(filepath=getwd(),st_count,st_coords,ref_celltype_gep,marker_ref_celltype_gep,cell_cut_list=NULL,start_loop=1,c=0.05,rmse_cut=0.05,consider_self=T,alpha=0.2,p_cut=1e-5,prop_cut=0.1,max_cores=8){
   if (start_loop==1){
     run_STANE(filepath=filepath,st_count = st_count,st_coords = st_coords,ref_celltype_gep = ref_celltype_gep,marker_ref_celltype_gep = marker_ref_celltype_gep,cell_cut_list=cell_cut_list,loop = start_loop,c=c,consider_self=consider_self,alpha=alpha,p_cut=p_cut,prop_cut=prop_cut,max_cores=max_cores)
     loop = start_loop+1
     run_STANE(filepath=filepath,st_count = st_count,st_coords = st_coords,ref_celltype_gep = ref_celltype_gep,marker_ref_celltype_gep = marker_ref_celltype_gep,cell_cut_list=cell_cut_list,loop = loop,c=c,consider_self=consider_self,alpha=alpha,p_cut=p_cut,prop_cut=prop_cut,max_cores=max_cores)
     rmse <- check_deconvolution_coverge(filepath = filepath, loop = loop)
     print(paste0("The converge level for loop ", loop, " is ", rmse))
-    while (rmse > 0.05 | loop < 6) {
+    while (rmse > rmse_cut | loop < 6) {
       loop = loop+1
       run_STANE(filepath=filepath,st_count = st_count,st_coords = st_coords,ref_celltype_gep = ref_celltype_gep,marker_ref_celltype_gep = marker_ref_celltype_gep,cell_cut_list=cell_cut_list,loop = loop,c=c,consider_self=consider_self,alpha=alpha,p_cut=p_cut,prop_cut=prop_cut,max_cores=max_cores)
       rmse <- check_deconvolution_coverge(filepath = filepath, loop = loop)
@@ -149,7 +218,7 @@ run_STANE_loop<-function(filepath=getwd(),st_count,st_coords,ref_celltype_gep,ma
     run_STANE(filepath=filepath,st_count = st_count,st_coords = st_coords,ref_celltype_gep = ref_celltype_gep,marker_ref_celltype_gep = marker_ref_celltype_gep,cell_cut_list=cell_cut_list,loop = loop,c=c,consider_self=consider_self,alpha=alpha,p_cut=p_cut,prop_cut=prop_cut,max_cores=max_cores)
     rmse <- check_deconvolution_coverge(filepath = filepath, loop = loop)
     print(paste0("The converge level for loop ", loop, " is ", rmse))
-    while (rmse > 0.05 | loop < 6) {
+    while (rmse > rmse_cut | loop < 6) {
       loop = loop+1
       run_STANE(filepath=filepath,st_count = st_count,st_coords = st_coords,ref_celltype_gep = ref_celltype_gep,marker_ref_celltype_gep = marker_ref_celltype_gep,cell_cut_list=cell_cut_list,loop = loop,c=c,consider_self=consider_self,alpha=alpha,p_cut=p_cut,prop_cut=prop_cut,max_cores=max_cores)
       rmse <- check_deconvolution_coverge(filepath = filepath, loop = loop)
@@ -159,7 +228,7 @@ run_STANE_loop<-function(filepath=getwd(),st_count,st_coords,ref_celltype_gep,ma
     loop = start_loop
     rmse <- check_deconvolution_coverge(filepath = filepath, loop = loop)
     print(paste0("The converge level for loop ", loop, " is ", rmse))
-    while (rmse > 0.05 | loop < 6) {
+    while (rmse > rmse_cut | loop < 6) {
       loop = loop+1
       run_STANE(filepath=filepath,st_count = st_count,st_coords = st_coords,ref_celltype_gep = ref_celltype_gep,marker_ref_celltype_gep = marker_ref_celltype_gep,cell_cut_list=cell_cut_list,loop = loop,c=c,consider_self=consider_self,alpha=alpha,p_cut=p_cut,prop_cut=prop_cut,max_cores=max_cores)
       rmse <- check_deconvolution_coverge(filepath = filepath, loop = loop)

@@ -1,12 +1,15 @@
-Package: STANEv0.0
+Package: STANE
 Type: Package
-Title: What the Package Does (Title Case)
+Title: STANE: Spatial transcriptomic analysis considering niche effects in the tumor microenvironment
 Version: 0.1.0
-Author: Who wrote it
-Maintainer: The package maintainer <yourself@somewhere.net>
-Description: More about what it does (maybe more than one line)
-    Use four spaces when indenting paragraphs within the Description.
-License: What license is it under?
+Author: ZHANG, Xiaomeng
+Maintainer: The package maintainer <xzhangew@connect.ust.hk>
+Description: This package uses cell type-specific expression information as reference to deconvolute
+    spatial transcriptomics data while considering niche effects through cell-cell interactions.
+    For one sample with spatial sequencing data, the package provides spot-level estimated cell type-
+    specific proportions as well as differential expressed genes caused by niche effects from neighbor
+    cells in the microenvironment.
+License: GPL (>= 3)
 Encoding: UTF-8
 LazyData: true
 Imports: 
@@ -20,4 +23,5 @@ Imports:
     Seurat,
     stats
 Depends: 
-    R (>= 2.10)
+    R (>= 4.3)
+RoxygenNote: 7.3.2

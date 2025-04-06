@@ -1,3 +1,10 @@
+#' Check whether the deconvlution results converge.
+#'
+#' This function is used to check whether the deconvlution results from two adjcent loops converge
+#' by calculating Root mean squared error.
+#' @param filepath A string of file path name to save the outputs of each loop.
+#' @param loop The number of loop you want to check its converge level compared with previous loop.
+#' @export
 check_deconvolution_coverge<-function(filepath=getwd(),loop){
   pre_loop<-(loop-1)
   output_dir<-paste0(filepath,"/deconv_result")
@@ -16,6 +23,27 @@ check_deconvolution_coverge<-function(filepath=getwd(),loop){
   return(rmse)
 }
 
+#' Estimate niche effects on one gene's expression
+#'
+#' This function uses cell type-specific expression profile and deconvolution results to estimate the
+#' level of niche effects on one gene's expression. In this process, a modified lasso regression, the
+#' Induced Smoothed Lasso model, is used to evaluate altered expression level caused by neighbor cells,
+#' and a cross-validation method is applied to select lambda for regression.
+#' @param select_gene One of gene name from expression matrix selected for niche effect estimation.
+#' @param count A vector of gene expression level for the selected gene.
+#' @param ref_celltype_gep The cell type-specific expression profile for reference.
+#' @param neighbor_abundance_mat A matrix of neighbor cell abundance.
+#' @param cell_deconv_res A matrix of relative cell type-specific number calculated by cell deconvolution.
+#' @references Cilluffo G, Sottile G, Muggeo V (2019). _The R package islasso: estimation and
+#' hypothesis testing in lasso regression_, volume 0 number 0. doi:10.13140/RG.2.2.16360.11521 <https://doi.org/10.13140/RG.2.2.16360.11521>.
+#' @references Friedman J, Tibshirani R, Hastie T (2010). “Regularization Paths for Generalized Linear Models
+#' via Coordinate Descent.” _Journal of Statistical Software_, *33*(1), 1-22. doi:10.18637/jss.v033.i01 <https://doi.org/10.18637/jss.v033.i01>.
+#' @examples
+#' data(st_count)
+#' select_gene<-row.names(st_count)[1]
+#' res<-run_lasso_reg(select_gene=select_gene,count = st_count,ref_celltype_gep = ref_celltype_count,neighbor_abundance_mat = mat_neighbor_abundance,cell_deconv_res = nnls_output)
+#' res
+#' @export
 run_lasso_reg<-function(select_gene,count,ref_celltype_gep,neighbor_abundance_mat,cell_deconv_res){
   type<-colnames(cell_deconv_res)
   prop_estimate<-as.data.frame(cell_deconv_res)

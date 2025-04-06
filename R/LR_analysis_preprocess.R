@@ -1,3 +1,11 @@
+#' Calculate expected cell type-specific expression for one spot
+#'
+#' This function calculate expected cell type-specific expression based on deconvolution results of relative
+#' cell number, cell type-specific expression profile and expression vector for one spot.
+#' @param spot_count A vector of gene expression level for one spot.
+#' @param spot_nnls_output A vector of relative cell number for the spot gotten by deconvolution.
+#' @param spot_ref A matrix of expression profile for cell types as reference.
+#' @export
 calculate_cell_exp<-function(spot_count,spot_nnls_output,spot_ref){
   x<-apply(spot_ref, 1, function(t) as.numeric(spot_nnls_output)*t/sum(as.numeric(spot_nnls_output)*t))
   x<-t(x)
@@ -5,7 +13,24 @@ calculate_cell_exp<-function(spot_count,spot_nnls_output,spot_ref){
   return(cell_count)
 }
 
-calculate_expected_celltype_exp<-function(filepath=getwd(),st_count,st_coords,ref_celltype_gep,loop=2,c=0.05,consider_self=T,alpha=0.2,p_cut=1e-5,max_cores=8){
+#' Calculate expected cell type-specific expression for one spatial transcriptomics sample
+#'
+#' This function gives a list of expected expression matrix of all cell types for one spatial trancriptomics
+#' sample, considering niche effects calculated in the STANE major process.
+#' @param filepath A string of file path name which saves the outputs of STANE loop results.
+#' @param st_count Expression matrix for single-cell level data.
+#' @param st_coords The dataframe containing coordinate of spots.
+#' @param ref_celltype_gep The cell type-specific expression profile for reference.
+#' @param loop The number of loop of which deconvolution and niche effect results will be used for calculation.
+#' @param alpha A weight that controls the influential level of niche effects on gene expression.
+#' @param p_cut A threshold of p-values for niche effect estimation. Niche effects with regression p-values lower
+#' than the p_cut is considered as significant.
+#' @param max_cores Number of cores used for parallel computing. If max_cores < 1, stop using parallel computing.
+#' @examples
+#' cell_count_list<-calculate_expected_celltype_exp(filepath = getwd(),st_count = st_count, st_coords = st_coords, ref_celltype_gep = ref_celltype_count, loop = 2, max_cores = 6)
+#' @export
+calculate_expected_celltype_exp<-function(filepath=getwd(),st_count,st_coords,ref_celltype_gep,loop=2,
+                                          alpha=0.2,p_cut=1e-5,max_cores=8){
   mat_neighbor_abundance<-readRDS(paste0(filepath,"/deconv_result/neighbor_abundance_loop_",loop,".rds"))
   pre_nicheDE<-read.csv(paste0(filepath,"/nicheDE_result/nicheDE_res_loop_",loop,".csv"))
   sig_beta_data<-pre_nicheDE[which(pre_nicheDE$padj<p_cut),]
@@ -22,7 +47,7 @@ calculate_expected_celltype_exp<-function(filepath=getwd(),st_count,st_coords,re
     doParallel::registerDoParallel(cl)
     environ = c('calculate_cell_exp','generate_spot_exp','st_count','ref_celltype_gep','nnls_output','alpha','mat_neighbor_abundance','sig_beta_data')
     cell_count_list0 <- foreach::foreach(i = (1:ncol(st_count)), .export = environ) %dopar% { #
-      new_ref_celltype_gep=generate_spot_exp(alpha = alpha,sample = colnames(st_count)[i],marker_ref_celltype_gep = ref_celltype_gep,
+      new_ref_celltype_gep=generate_spot_exp(alpha = alpha,spotID = colnames(st_count)[i],marker_ref_celltype_gep = ref_celltype_gep,
                                                     neighbor_prop = mat_neighbor_abundance,sig_beta_list = sig_beta_data)
       res<-calculate_cell_exp(spot_count=st_count[,i],spot_ref=new_ref_celltype_gep,spot_nnls_output = nnls_output[i,])
       res
@@ -40,7 +65,7 @@ calculate_expected_celltype_exp<-function(filepath=getwd(),st_count,st_coords,re
   } else {
     cell_count_list0<-list()
     for (i in (1:ncol(st_count))) {
-      new_ref_celltype_gep=generate_spot_exp(alpha = alpha,sample = colnames(st_count)[i],marker_ref_celltype_gep = ref_celltype_gep,
+      new_ref_celltype_gep=generate_spot_exp(alpha = alpha,spotID = colnames(st_count)[i],marker_ref_celltype_gep = ref_celltype_gep,
                                              neighbor_prop = mat_neighbor_abundance,sig_beta_list = sig_beta_data)
       res<-calculate_cell_exp(spot_count=st_count[,i],spot_ref=new_ref_celltype_gep,spot_nnls_output = nnls_output[i,])
       cell_count_list0[[colnames(st_count)[i]]]<-res
@@ -57,6 +82,15 @@ calculate_expected_celltype_exp<-function(filepath=getwd(),st_count,st_coords,re
   return(cell_count_list)
 }
 
+#' Calculate co-upregulated bi-variant local Moran's I
+#'
+#' This function calculate the co-upregulated bi-variant local Moran's I for ligand and receptor gene expression
+#' in the neighbor and target cell type. Only if the ligand and receptor genes are both higher than the average
+#' expressio level, is the local Moran's I higher than 0.
+#' @param input_x,input_y A vector of expression level for ligand/receptor genes.
+#' @param weight_mtx A matrix of weights that controls influences of the distance between neighbor cell and target
+#' cell.
+#' @export
 calculate_localmoranI_bivariat<-function(input_x,input_y,weight_mtx){
   z_x<-(input_x-mean(input_x))/sd(input_x)
   z_y<-(input_y-mean(input_y))/sd(input_y)
@@ -68,7 +102,33 @@ calculate_localmoranI_bivariat<-function(input_x,input_y,weight_mtx){
   return(local_I)
 }
 
-get_correlated_LR<-function(filepath=getwd(),st_coords,cell_count_list,LR_list,nicheDE_res,keep_moranI=T,target_celltype,neighbor_celltype,p_cut=1e-5,cor_cut=1e-3,count_cut=10,max_cores=8){
+#' Find the most significant ligand-receptor interaction on cell-cell niche effects.
+#'
+#' This function use correlation analysis and enrichment test to find the most significant ligand-receptor interactions
+#' which play important roles on gene expression alterations caused by niche effects.
+#' @param filepath A string of file path name to save the outputs of this loop.
+#' @param st_coords The dataframe containing coordinate of spots.
+#' @param cell_count_list A list of expression profile for cell types calculated by function `calculate_expected_celltype_exp()`.
+#' @param LR_list A dataframe containing lignd and receptor genes.
+#' @param nicheDE_res A dataframe of niche effect estimation gotten by STANE process.
+#' @param keep_moranI Logical. If true, save the bi-variant Moran's I results in the predefined file path. Default is TRUE.
+#' @param target_celltype A cell type name which receives niche effects and acts as receptor.
+#' @param neighbor_celltype A cell type name which gives niche effects and acts as ligand.
+#' @param p_cut A threshold of p-values for niche effect estimation. Niche effects with regression p-values lower
+#' than the p_cut is considered as significant.
+#' @param cor_cut A threshold of correlation test p-values to find correlated genes with ligand-receptor activity.
+#' @param count_cut A threshold of expression level for ligand and receptor genes in cell types. Only genes higher than this
+#' cut-off will be used to do ligand-receptor analysis.
+#' @param max_cores Number of cores used for parallel computing. If max_cores < 1, stop using parallel computing.
+#' @examples
+#' data(LR_list)
+#' loop = 2
+#' cell_count_list<-calculate_expected_celltype_exp(filepath = getwd(),st_count = st_count, st_coords = st_coords, ref_celltype_gep = ref_celltype_count, loop = loop, max_cores = 6)
+#' nicheDE_result<-read.csv(paste0(filepath,"/nicheDE_result/nicheDE_res_loop_",loop,".csv"))
+#' cor_LR_moranI_res<-get_correlated_LR(st_coords = st_coords,cell_count_list = cell_count_list,LR_list = LR_list,nicheDE_res = nicheDE_result,target_celltype = "Tumor",neighbor_celltype = "Myeloid",max_cores = 6)
+#' @export
+get_correlated_LR<-function(filepath=getwd(),st_coords,cell_count_list,LR_list,nicheDE_res,keep_moranI=T,target_celltype,
+                            neighbor_celltype,p_cut=1e-5,cor_cut=1e-3,count_cut=10,max_cores=8){
   count_L<-cell_count_list[[neighbor_celltype]][intersect(unique(LR_list$L_gene),row.names(cell_count_list[[1]])),]
   count_R<-cell_count_list[[target_celltype]][intersect(unique(LR_list$R_gene),row.names(cell_count_list[[1]])),]
   count_L<-count_L[which(rowSums(count_L)>=count_cut),]
@@ -116,7 +176,8 @@ get_correlated_LR<-function(filepath=getwd(),st_coords,cell_count_list,LR_list,n
       sign_check<-sign(cor_coef*nicheDE_res$coefficient)
       y<-names(cor_pval)[intersect(which(cor_pval<cor_cut),which(sign_check>0))]
       z<-setdiff(names(cor_pval),y)
-      res<-fisher.test(matrix(c(length(intersect(y,sig_nicheDE_res$geneName)),length(intersect(y,unsig_nicheDE_res$geneName)),length(intersect(z,sig_nicheDE_res$geneName)),length(intersect(z,unsig_nicheDE_res$geneName))),nrow = 2,byrow = T))
+      res<-fisher.test(matrix(c(length(intersect(y,sig_nicheDE_res$geneName)),length(intersect(y,unsig_nicheDE_res$geneName)),
+                                length(intersect(z,sig_nicheDE_res$geneName)),length(intersect(z,unsig_nicheDE_res$geneName))),nrow = 2,byrow = T))
       final_res<-c(LR_list$LR_pair[i],res$p.value,res$estimate,paste0(y,collapse=","))
       final_res
     }
@@ -147,7 +208,8 @@ get_correlated_LR<-function(filepath=getwd(),st_coords,cell_count_list,LR_list,n
       sign_check<-sign(cor_coef*nicheDE_res$coefficient)
       y<-names(cor_pval)[intersect(which(cor_pval<cor_cut),which(sign_check>0))]
       z<-setdiff(names(cor_pval),y)
-      res<-fisher.test(matrix(c(length(intersect(y,sig_nicheDE_res$geneName)),length(intersect(y,unsig_nicheDE_res$geneName)),length(intersect(z,sig_nicheDE_res$geneName)),length(intersect(z,unsig_nicheDE_res$geneName))),nrow = 2,byrow = T))
+      res<-fisher.test(matrix(c(length(intersect(y,sig_nicheDE_res$geneName)),length(intersect(y,unsig_nicheDE_res$geneName)),
+                                length(intersect(z,sig_nicheDE_res$geneName)),length(intersect(z,unsig_nicheDE_res$geneName))),nrow = 2,byrow = T))
       final_res<-c(LR_list$LR_pair[i],res$p.value,res$estimate,paste0(y,collapse=","))
 
       cor_LR_moranI[[i]]<-final_res
