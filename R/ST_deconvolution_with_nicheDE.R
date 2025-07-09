@@ -46,6 +46,7 @@ neighbor_abundance<-function(feature_mat,dist_mat,spotID,c=0.5,consider_self=T){
   neighbor_ID<-names(x)
   if (consider_self==F){
     neighbor_ID<-setdiff(neighbor_ID,spotID)
+    x<-x[neighbor_ID]
   }
   prop_mat<-feature_mat[neighbor_ID,]
   output_abundance<-apply(prop_mat,2,function (t) weighted.mean(t,exp(-c*x)))
